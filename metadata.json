@@ -1,0 +1,6 @@
+{
+  "name": "FSOC Virtual Camera Tracking System",
+  "description": "AI-Based Virtual Camera Tracking System for Coarse Alignment of Mobile Free Space Optical Communication (FSOC) Terminals (ISRO / SIH 2024).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
