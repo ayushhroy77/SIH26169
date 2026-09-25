@@ -29,7 +29,8 @@ class NoiseModel:
         gauss_enabled: bool = False,
         gauss_std: float = 8.0,     # 0 to 20 px std dev
         poisson_enabled: bool = False,
-        poisson_scale: float = 20.0 # 1 to 100
+        poisson_scale: float = 20.0, # 1 to 100
+        rng: Optional[np.random.Generator] = None
     ) -> np.ndarray:
         if master_intensity <= 0.001:
             return frame
@@ -37,6 +38,7 @@ class NoiseModel:
         out = frame.astype(np.float32)
         h, w = frame.shape[:2]
         is_mono = (len(frame.shape) == 2 or frame.shape[2] == 1)
+        r = rng if rng is not None else np.random.default_rng()
 
         # 1. Salt & Pepper Noise (0-20% density)
         if sp_enabled and sp_density > 0:
@@ -46,8 +48,8 @@ class NoiseModel:
 
             # Salt (White pixels)
             if num_salt > 0:
-                y_coords = np.random.randint(0, h, num_salt)
-                x_coords = np.random.randint(0, w, num_salt)
+                y_coords = r.integers(0, h, num_salt)
+                x_coords = r.integers(0, w, num_salt)
                 if is_mono:
                     out[y_coords, x_coords] = 255.0
                 else:
@@ -55,8 +57,8 @@ class NoiseModel:
 
             # Pepper (Dark pixels)
             if num_pepper > 0:
-                y_coords = np.random.randint(0, h, num_pepper)
-                x_coords = np.random.randint(0, w, num_pepper)
+                y_coords = r.integers(0, h, num_pepper)
+                x_coords = r.integers(0, w, num_pepper)
                 if is_mono:
                     out[y_coords, x_coords] = 0.0
                 else:
@@ -65,7 +67,7 @@ class NoiseModel:
         # 2. Gaussian Noise (mean 0, std-dev 0-20 px)
         if gauss_enabled and gauss_std > 0:
             effective_sigma = gauss_std * master_intensity
-            noise = np.random.normal(0, effective_sigma, frame.shape)
+            noise = r.normal(0, effective_sigma, frame.shape)
             out = out + noise
 
         # 3. Poisson / Shot Noise (Photon noise model)
@@ -73,7 +75,7 @@ class NoiseModel:
             # Scale frame to photon count, sample Poisson, scale back
             scale = max(1.0, poisson_scale * (1.0 / max(0.1, master_intensity)))
             scaled = np.maximum(0.0, out) / scale
-            poisson_noisy = np.random.poisson(scaled).astype(np.float32) * scale
+            poisson_noisy = r.poisson(scaled).astype(np.float32) * scale
             blend_factor = min(1.0, master_intensity)
             out = out * (1.0 - blend_factor) + poisson_noisy * blend_factor
 
@@ -95,7 +97,8 @@ class AtmosphereModel:
         frame: np.ndarray,
         condition: str = "Clear",
         severity: float = 0.5,
-        frame_idx: int = 0
+        frame_idx: int = 0,
+        rng: Optional[np.random.Generator] = None
     ) -> np.ndarray:
         if condition == "Clear" or severity <= 0.01:
             return frame
@@ -104,6 +107,7 @@ class AtmosphereModel:
         out = frame.astype(np.float32)
         h, w = frame.shape[:2]
         is_mono = (len(frame.shape) == 2 or frame.shape[2] == 1)
+        r = rng if rng is not None else np.random.default_rng()
 
         if condition == "Haze":
             # Contrast reduction by ~20% * severity, white airlight veil
@@ -128,10 +132,9 @@ class AtmosphereModel:
             # Diagonal rain streaks
             streak_img = np.zeros((h, w), dtype=np.float32)
             num_streaks = int(80 * s)
-            np.random.seed((frame_idx * 17 + 42) % 100000)
-            xs = np.random.randint(0, w, num_streaks)
-            ys = np.random.randint(0, h, num_streaks)
-            lengths = np.random.randint(12, 28, num_streaks)
+            xs = r.integers(0, w, num_streaks)
+            ys = r.integers(0, h, num_streaks)
+            lengths = r.integers(12, 28, num_streaks)
             for x, y, l in zip(xs, ys, lengths):
                 cv2.line(streak_img, (x, y), (int(x - l * 0.4), int(y + l)), 180.0 * s, 1)
             if not is_mono:
@@ -142,7 +145,7 @@ class AtmosphereModel:
             # Reduction in scene brightness ~50% * s, ambient photon starvation, sensor gain noise
             attenuation = 1.0 - (0.65 * s)
             out = out * attenuation
-            gain_noise = np.random.normal(0, 10.0 * s, frame.shape).astype(np.float32)
+            gain_noise = r.normal(0, 10.0 * s, frame.shape).astype(np.float32)
             out = out + gain_noise
 
         return np.clip(out, 0, 255).astype(np.uint8)
@@ -155,9 +158,13 @@ class CameraJitter:
     Supports Uniform random or Perlin-style smooth oscillatory jitter.
     Intensity: 0 to 20 px/frame (spec maximum).
     """
-    def __init__(self):
+    def __init__(self, rng: Optional[np.random.Generator] = None):
         self.phase_x = 0.0
         self.phase_y = 0.0
+        self.rng = rng if rng is not None else np.random.default_rng()
+
+    def set_rng(self, rng: np.random.Generator):
+        self.rng = rng
 
     def compute(
         self,
@@ -179,9 +186,9 @@ class CameraJitter:
             jy = (math.cos(self.phase_y) * 0.6 + math.cos(self.phase_y * 1.9) * 0.4) * amp
             return jx, jy
         else:
-            # Uniform high-frequency random jitter
-            jx = (np.random.rand() - 0.5) * 2.0 * amp
-            jy = (np.random.rand() - 0.5) * 2.0 * amp
+            # Uniform high-frequency random jitter using subsystem generator
+            jx = (self.rng.random() - 0.5) * 2.0 * amp
+            jy = (self.rng.random() - 0.5) * 2.0 * amp
             return float(jx), float(jy)
 
 
@@ -192,10 +199,14 @@ class PlatformMotion:
     Applied in the world/scene reference frame (0-20 px/frame max amplitude).
     Composes additively with camera jitter in final viewport.
     """
-    def __init__(self):
+    def __init__(self, rng: Optional[np.random.Generator] = None):
         self.angle = 0.0
         self.walk_x = 0.0
         self.walk_y = 0.0
+        self.rng = rng if rng is not None else np.random.default_rng()
+
+    def set_rng(self, rng: np.random.Generator):
+        self.rng = rng
 
     def compute(
         self,
@@ -222,9 +233,9 @@ class PlatformMotion:
             return dx, dy
 
         elif motion_type == "Random":
-            # Random drift with dampening
-            step_x = (np.random.rand() - 0.5) * amp * 0.5
-            step_y = (np.random.rand() - 0.5) * amp * 0.5
+            # Random drift with dampening using subsystem generator
+            step_x = (self.rng.random() - 0.5) * amp * 0.5
+            step_y = (self.rng.random() - 0.5) * amp * 0.5
             self.walk_x = np.clip(self.walk_x * 0.95 + step_x, -amp, amp)
             self.walk_y = np.clip(self.walk_y * 0.95 + step_y, -amp, amp)
             return float(self.walk_x), float(self.walk_y)

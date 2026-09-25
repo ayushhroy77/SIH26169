@@ -3,14 +3,133 @@ import { useAppStore } from '../../lib/store';
 import { Card } from '../ui/Card';
 import { Slider } from '../ui/Slider';
 import { Select } from '../ui/Select';
+import { Target, ShieldCheck, AlertCircle } from 'lucide-react';
 
 export const DetectionEngine: React.FC = () => {
   const spec = useAppStore((state) => state.spec);
   const updateSpec = useAppStore((state) => state.updateSpec);
   const metrics = useAppStore((state) => state.metrics);
 
+  const lockRadius = spec.lockRadiusPx ?? 12;
+  const lockFramesM = spec.lockFramesM ?? 3;
+  const lossFramesK = spec.lossFramesK ?? 5;
+
+  const inFrameError = metrics.inFrameErrorPx ?? (metrics.detectedCentroid && metrics.targetCameraPos
+    ? Math.hypot(metrics.detectedCentroid.x - metrics.targetCameraPos.x, metrics.detectedCentroid.y - metrics.targetCameraPos.y)
+    : metrics.trackingErrorPx);
+
+  const truePointingError = metrics.truePointingErrorPx ?? metrics.trackingErrorPx;
+  const lockState = metrics.lockState ?? (metrics.lockStatus === 'Tracking' ? 'TRACK' : 'SEARCH');
+
   return (
     <div className="space-y-4 select-none">
+      {/* Metric Contract Criteria (Phase 4: R, M, K) */}
+      <Card
+        title="Lock & Loss Contract"
+        specCode="SIH-16..18"
+        specDescription="Configurable ISRO threshold criteria (R, M, K) for state machine transition and loss detection"
+      >
+        <div className="space-y-3">
+          {/* Lock Radius R */}
+          <div>
+            <div className="flex items-center justify-between mb-1 text-xs">
+              <span className="text-[#EDEDED] font-medium" title="Lock radius threshold R: |centroid - gt| ≤ R defines within-lock region">
+                Lock Radius R (px)
+              </span>
+              <span className="font-mono text-[#5B8DEF] tabular-nums">{lockRadius} px</span>
+            </div>
+            <Slider
+              label=""
+              value={lockRadius}
+              min={5}
+              max={30}
+              step={1}
+              onChange={(val) => updateSpec({ lockRadiusPx: val })}
+            />
+            <span className="text-[10px] text-[#8A8A93] font-mono">
+              SIH-17 Target: ≤ 10 px. Tolerance gate R for lock confirmation.
+            </span>
+          </div>
+
+          {/* Lock Persistence M (frames) & Loss Persistence K (frames) */}
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <div className="bg-[#17171A] border border-[#1F1F23]/60 rounded p-2">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-[#8A8A93]" title="Consecutive frames within R required to declare locked(t)">
+                  Lock Conf (M)
+                </span>
+                <span className="font-mono text-[#EDEDED] font-semibold">{lockFramesM}</span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => updateSpec({ lockFramesM: Math.max(1, lockFramesM - 1) })}
+                  className="flex-1 py-1 bg-[#222226] hover:bg-[#2A2A30] text-[#EDEDED] rounded text-xs font-mono"
+                >
+                  -
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateSpec({ lockFramesM: Math.min(10, lockFramesM + 1) })}
+                  className="flex-1 py-1 bg-[#222226] hover:bg-[#2A2A30] text-[#EDEDED] rounded text-xs font-mono"
+                >
+                  +
+                </button>
+              </div>
+              <span className="text-[9px] text-[#5C5C66] mt-1 block font-mono">Consecutive frames</span>
+            </div>
+
+            <div className="bg-[#17171A] border border-[#1F1F23]/60 rounded p-2">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-[#8A8A93]" title="Consecutive out-of-lock frames before declaring loss(t)">
+                  Loss Conf (K)
+                </span>
+                <span className="font-mono text-[#EDEDED] font-semibold">{lossFramesK}</span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => updateSpec({ lossFramesK: Math.max(1, lossFramesK - 1) })}
+                  className="flex-1 py-1 bg-[#222226] hover:bg-[#2A2A30] text-[#EDEDED] rounded text-xs font-mono"
+                >
+                  -
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateSpec({ lossFramesK: Math.min(20, lossFramesK + 1) })}
+                  className="flex-1 py-1 bg-[#222226] hover:bg-[#2A2A30] text-[#EDEDED] rounded text-xs font-mono"
+                >
+                  +
+                </button>
+              </div>
+              <span className="text-[9px] text-[#5C5C66] mt-1 block font-mono">Frames before loss</span>
+            </div>
+          </div>
+
+          {/* State & Ground Truth Defined Metric Telemetry */}
+          <div className="p-2.5 bg-[#17171A] border border-[#1F1F23]/60 rounded text-xs space-y-1.5 font-mono">
+            <div className="flex justify-between items-center text-[#8A8A93]">
+              <span>Lock State:</span>
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                lockState === 'TRACK' ? 'bg-[#22C55E]/15 text-[#22C55E]' :
+                lockState === 'ACQUIRE' || lockState === 'COAST' ? 'bg-[#EAB308]/15 text-[#EAB308]' :
+                'bg-[#EF4444]/15 text-[#EF4444]'
+              }`}>
+                {lockState}
+              </span>
+            </div>
+            <div className="flex justify-between text-[#8A8A93]">
+              <span title="|centroid(t) - gt(t)|">In-Frame Error:</span>
+              <span className="text-[#EDEDED] tabular-nums">{Number(inFrameError).toFixed(2)} px</span>
+            </div>
+            <div className="flex justify-between text-[#8A8A93]">
+              <span title="|boresight(t) - gt(t)|">True Pointing Error:</span>
+              <span className="text-[#EDEDED] tabular-nums">{Number(truePointingError).toFixed(2)} px</span>
+            </div>
+          </div>
+        </div>
+      </Card>
+
       {/* Computer Vision & AI Detection */}
       <Card
         title="Centroiding & Detection"

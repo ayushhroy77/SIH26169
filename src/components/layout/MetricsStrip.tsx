@@ -41,22 +41,45 @@ export const MetricsStrip: React.FC = () => {
   else if (lockPct < 95.0) lockStatus = 'warning';
 
   // 6. Processing FPS
-  const fps = isVideoMode ? (benchmarkMetrics.fpsMeasured ?? 30) : (metrics.fps ?? 30);
+  const fps = isVideoMode ? (benchmarkMetrics.fpsMeasured ?? 30) : (metrics.fpsMeasured ?? metrics.fps ?? 30);
   let fpsStatus: MetricStatus = 'success';
   if (fps < 20) fpsStatus = 'error';
   else if (fps < 25) fpsStatus = 'warning';
 
   // 7. Processing Latency
-  const latencyMs = isVideoMode ? (benchmarkMetrics.processingTimeMs ?? 4.2) : (metrics.processingTimeMs ?? 3.8);
+  const latencyMs = isVideoMode ? (benchmarkMetrics.processingTimeMs ?? 4.2) : (metrics.processingMs ?? metrics.processingTimeMs ?? 3.8);
   let latencyStatus: MetricStatus = 'success';
   if (latencyMs > 33.3) latencyStatus = 'error';
   else if (latencyMs > 16.6) latencyStatus = 'warning';
 
+  // Phase 4 Lock State enum: SEARCH | ACQUIRE | TRACK | COAST | REACQUIRE
+  const lockState = metrics.lockState ?? (metrics.isLocked ? 'TRACK' : 'SEARCH');
+  let lockStateStatus: MetricStatus = 'error';
+  if (lockState === 'TRACK') lockStateStatus = 'success';
+  else if (lockState === 'ACQUIRE' || lockState === 'COAST') lockStateStatus = 'warning';
+
+  const inFrameErr = metrics.inFrameErrorPx ?? errorPx;
+  const truePointErr = metrics.truePointingErrorPx ?? errorPx;
+
   const items = [
     {
-      id: 'metric-error',
-      label: isVideoMode ? 'RMSE' : 'ERROR',
-      value: `${errorPx.toFixed(2)} px`,
+      id: 'metric-state',
+      label: 'STATE',
+      value: lockState,
+      target: 'SIH',
+      status: lockStateStatus,
+    },
+    {
+      id: 'metric-inframe',
+      label: 'IN-FRAME',
+      value: `${inFrameErr.toFixed(1)} px`,
+      target: `R ≤ ${spec.lockRadiusPx ?? 12}`,
+      status: inFrameErr <= (spec.lockRadiusPx ?? 12) ? 'success' : 'warning',
+    },
+    {
+      id: 'metric-pointing',
+      label: 'POINTING',
+      value: `${truePointErr.toFixed(1)} px`,
       target: `≤ ${spec.maxTrackingErrorPx} px`,
       status: errorStatus,
     },
@@ -113,7 +136,7 @@ export const MetricsStrip: React.FC = () => {
         <React.Fragment key={item.id}>
           {idx > 0 && <span className="text-[#1F1F23] select-none">|</span>}
           <div className="flex items-center gap-1.5 whitespace-nowrap">
-            <MetricDot status={item.status} />
+            <MetricDot status={item.status as MetricStatus} />
             <span className="text-[#8A8A93] text-[10px] tracking-wide">{item.label}</span>
             <span className="text-[#EDEDED] font-medium tabular-nums">{item.value}</span>
             <span className="text-[#5C5C66] text-[10px] tabular-nums">({item.target})</span>

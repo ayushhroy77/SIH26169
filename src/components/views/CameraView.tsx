@@ -127,29 +127,41 @@ export const CameraView: React.FC<CameraViewProps> = ({
     }
 
     // 5. Render All Configured Optical Targets inside FOV
-    const targetsToRender = (spec.targets && spec.targets.length > 0)
-      ? spec.targets.slice(0, spec.targetCount)
-      : [{
-          id: 1,
-          shape: spec.targetShape,
-          size: spec.targetSize,
-          initialLocation: spec.initialTargetLocation,
-          motion: spec.targetMotion,
-          speed: spec.targetSpeed,
-        }];
+    const activeTargets = (metrics.allTargets && metrics.allTargets.length > 0)
+      ? metrics.allTargets
+      : (spec.targets && spec.targets.length > 0)
+        ? spec.targets.slice(0, spec.targetCount).map((tgt) => {
+            const isPrimary = (tgt.id === metrics.primaryTargetId);
+            return {
+              id: tgt.id,
+              shape: tgt.shape,
+              size: tgt.size,
+              inFov: isPrimary ? targetInFov : false,
+              cameraPos: isPrimary ? targetCameraPos : null,
+              isPrimary,
+            };
+          })
+        : [{
+            id: 1,
+            shape: spec.targetShape,
+            size: spec.targetSize,
+            inFov: targetInFov,
+            cameraPos: targetCameraPos,
+            isPrimary: true,
+          }];
 
-    targetsToRender.forEach((tgt) => {
+    activeTargets.forEach((tgt) => {
       let tx: number, ty: number, inFov: boolean;
-      if (tgt.id === metrics.primaryTargetId && targetCameraPos) {
+      if (tgt.cameraPos) {
+        tx = tgt.cameraPos.x;
+        ty = tgt.cameraPos.y;
+        inFov = tgt.inFov;
+      } else if (tgt.id === metrics.primaryTargetId && targetCameraPos) {
         tx = targetCameraPos.x;
         ty = targetCameraPos.y;
         inFov = targetInFov;
       } else {
-        const secPos = metrics.secondaryTargets?.find((s) => s.id === tgt.id);
-        if (!secPos) return;
-        tx = secPos.cameraPos.x;
-        ty = secPos.cameraPos.y;
-        inFov = secPos.inFov;
+        return;
       }
 
       if (!inFov || tx < -40 || tx > width + 40 || ty < -40 || ty > height + 40) return;
@@ -175,9 +187,9 @@ export const CameraView: React.FC<CameraViewProps> = ({
     });
 
     // 6. Disturbances: Image Noise
-    if (spec.noiseSaltPepper || (spec.noiseGaussianEnabled && spec.noiseGaussianStdDev > 0)) {
-      const masterNoise = (spec.noiseStdDev || 8) / 25;
-      if (spec.noiseSaltPepper) {
+    if (spec.noiseSaltPepperEnabled || (spec.noiseGaussianEnabled && spec.noiseGaussianStdDev > 0)) {
+      const masterNoise = (spec.noiseGaussianStdDev || 8) / 25;
+      if (spec.noiseSaltPepperEnabled) {
         const count = Math.floor(width * height * 0.003 * masterNoise);
         for (let i = 0; i < count; i++) {
           const nx = Math.random() * width;

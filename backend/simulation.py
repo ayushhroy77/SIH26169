@@ -1,20 +1,32 @@
 """
 Server-side 2000x2000 Scene Rendering & Physical Kinematics (OpenCV + NumPy)
-Phase 2: Multi-Target (N=1..8), Custom Shapes & Masks, Extended Kinematics,
-and Composable Disturbance Engine (Noise, Atmosphere, Jitter, Platform Motion).
 Department of Space / ISRO (SIH 2024)
+Phase 4: Fixed Simulated Timestep (DT=1/30s), Subsystem-Isolated RNG,
+Multi-Target Support, and Configurable Metric Definitions (R, M, K).
 """
 
 import numpy as np
 import cv2
 import base64
 import math
+import time
 from typing import List, Dict, Any, Tuple, Optional
-from spec import SystemSpec
+from spec import SystemSpec, MetricConfig
 from disturbances import NoiseModel, AtmosphereModel, CameraJitter, PlatformMotion
+from rng import RNGRegistry
+
+DT = 1.0 / 30.0  # seconds, fixed simulation timestep
 
 class TargetState:
-    def __init__(self, target_id: int, config: Dict[str, Any], screen_w: int, screen_h: int):
+    def __init__(
+        self,
+        target_id: int,
+        config: Dict[str, Any],
+        screen_w: int,
+        screen_h: int,
+        rng_spawn: Optional[np.random.Generator] = None,
+        rng_motion: Optional[np.random.Generator] = None
+    ):
         self.id = target_id
         self.shape = config.get("shape", "Square")
         self.size = config.get("size", 10)
@@ -22,23 +34,24 @@ class TargetState:
         self.speed = float(config.get("speed", 90.0))
         self.waypoints = config.get("waypoints", [])
         self.custom_mask = config.get("custom_mask", None)
-        
+        self.rng_motion = rng_motion if rng_motion is not None else np.random.default_rng(target_id * 1013 + 7)
+        r_spawn = rng_spawn if rng_spawn is not None else np.random.default_rng(target_id * 503 + 3)
+
         # Position initialization
         loc = config.get("initial_location", "Random")
         custom_pos = config.get("custom_pos")
-        
+
         if custom_pos and "x" in custom_pos and "y" in custom_pos:
             self.x = float(custom_pos["x"])
             self.y = float(custom_pos["y"])
         elif loc == "Center":
             self.x = screen_w / 2.0 + (target_id - 1) * 30.0
             self.y = screen_h / 2.0 + (target_id - 1) * 30.0
-        else: # Random
-            np.random.seed(target_id * 1013 + 7)
-            self.x = 350.0 + np.random.rand() * (screen_w - 700.0)
-            self.y = 350.0 + np.random.rand() * (screen_h - 700.0)
+        else: # Random deterministic via spawn generator
+            self.x = 350.0 + r_spawn.random() * (screen_w - 700.0)
+            self.y = 350.0 + r_spawn.random() * (screen_h - 700.0)
 
-        angle = np.random.rand() * math.pi * 2.0
+        angle = r_spawn.random() * math.pi * 2.0
         self.vx = math.cos(angle) * self.speed
         self.vy = math.sin(angle) * self.speed
         self.angle = (target_id - 1) * (math.pi / 4.0)
@@ -92,7 +105,6 @@ class TargetState:
             self.y = screen_h / 2.0 + math.sin(self.angle) * r
 
         elif self.motion == "Sinusoidal":
-            # X progress + Y sinusoid
             self.x += (speed * 0.85) * dt
             if self.x > screen_w - margin:
                 self.x = margin
@@ -100,11 +112,10 @@ class TargetState:
             self.y = screen_h / 2.0 + math.sin(sim_time * freq + self.id) * 280.0
 
         elif self.motion == "User-defined" and len(self.waypoints) >= 2:
-            # Interpolate through waypoints
             p1 = self.waypoints[self.waypoint_idx]
             next_idx = (self.waypoint_idx + 1) % len(self.waypoints)
             p2 = self.waypoints[next_idx]
-            
+
             dx = p2["x"] - p1["x"]
             dy = p2["y"] - p1["y"]
             dist = math.hypot(dx, dy)
@@ -113,35 +124,74 @@ class TargetState:
             if self.waypoint_t >= 1.0:
                 self.waypoint_t = 0.0
                 self.waypoint_idx = next_idx
-            
-            # Smooth cubic ease
+
             t = self.waypoint_t
             smooth_t = t * t * (3.0 - 2.0 * t)
             self.x = p1["x"] + dx * smooth_t
             self.y = p1["y"] + dy * smooth_t
 
-        else: # Random walk
-            self.x += (np.random.rand() - 0.5) * speed * dt * 2.2
-            self.y += (np.random.rand() - 0.5) * speed * dt * 2.2
+        else: # Random walk using subsystem isolated motion generator
+            self.x += (self.rng_motion.random() - 0.5) * speed * dt * 2.2
+            self.y += (self.rng_motion.random() - 0.5) * speed * dt * 2.2
             self.x = max(margin, min(screen_w - margin, self.x))
             self.y = max(margin, min(screen_h - margin, self.y))
 
+        # Append trail
+        self.trail.append((self.x, self.y))
+        if len(self.trail) > 60:
+            self.trail.pop(0)
+
 
 class SimulationEngine:
-    def __init__(self, spec: SystemSpec):
+    def __init__(self, spec: SystemSpec, master_seed: int = 42):
         self.spec = spec
-        self.jitter_engine = CameraJitter()
-        self.platform_engine = PlatformMotion()
+        self.master_seed = master_seed
+        self.rng_registry = RNGRegistry(master_seed)
+        self.jitter_engine = CameraJitter(self.rng_registry.jitter)
+        self.platform_engine = PlatformMotion(self.rng_registry.platform)
         self.targets: List[TargetState] = []
         self.primary_target_id = 1
         self.reset()
 
-    def reset(self):
+    def reset(self, new_seed: Optional[int] = None):
+        if new_seed is not None:
+            self.master_seed = new_seed
+            self.rng_registry = RNGRegistry(self.master_seed)
+            self.jitter_engine.set_rng(self.rng_registry.jitter)
+            self.platform_engine.set_rng(self.rng_registry.platform)
+
         self.sim_time = 0.0
+        self.wall_time_start = time.perf_counter()
         self.total_frames = 0
         self.cam_x = float(self.spec.initial_camera_pos[0])
         self.cam_y = float(self.spec.initial_camera_pos[1])
         self.init_targets()
+
+        # Metric state machine (R, M, K criteria)
+        self.lock_state = "SEARCH"  # SEARCH | ACQUIRE | TRACK | COAST | REACQUIRE
+        self.consecutive_lock_count = 0
+        self.consecutive_loss_count = 0
+        self.locked_frames = 0
+        self.lost_frames = 0
+        self.frames_with_target_visible = 0
+        self.state_transitions: List[Dict[str, Any]] = []
+
+        self.target_entered_fov_time: Optional[float] = None
+        self.first_locked_time: Optional[float] = None
+        self.acquisition_time_s: float = 0.0
+        self.loss_onset_time: Optional[float] = None
+        self.reacquisition_time_s: float = 0.0
+
+        self.errors_history: List[float] = []
+
+    def log_transition(self, from_state: str, to_state: str, reason: str):
+        self.state_transitions.append({
+            "frame": self.total_frames,
+            "sim_time_s": round(self.sim_time, 4),
+            "from_state": from_state,
+            "to_state": to_state,
+            "reason": reason
+        })
 
     def init_targets(self):
         self.targets = []
@@ -158,8 +208,31 @@ class SimulationEngine:
                 "waypoints": self.spec.custom_path_waypoints,
                 "custom_mask": self.spec.custom_mask_32x32
             }
-            self.targets.append(TargetState(target_id, cfg, self.spec.screen_width, self.spec.screen_height))
+            self.targets.append(
+                TargetState(
+                    target_id,
+                    cfg,
+                    self.spec.screen_width,
+                    self.spec.screen_height,
+                    rng_spawn=self.rng_registry.spawn,
+                    rng_motion=self.rng_registry.motion
+                )
+            )
         self.primary_target_id = 1
+
+    def apply_gimbal_slew(self, pan_rate_deg_s: float, tilt_rate_deg_s: float, dt: float = DT):
+        """
+        Applies coarse pointing pan/tilt gimbal slew rates to the camera position.
+        Converts angular rates (deg/s) to physical displacement on 2000x2000 screen.
+        """
+        deg_per_px_h = self.spec.camera_fov_h_deg / self.spec.camera_width
+        deg_per_px_v = self.spec.camera_fov_v_deg / self.spec.camera_height
+        dx = (pan_rate_deg_s * dt) / deg_per_px_h
+        dy = (tilt_rate_deg_s * dt) / deg_per_px_v
+        half_w = self.spec.camera_width / 2.0
+        half_h = self.spec.camera_height / 2.0
+        self.cam_x = max(half_w, min(self.spec.screen_width - half_w, self.cam_x + dx))
+        self.cam_y = max(half_h, min(self.spec.screen_height - half_h, self.cam_y + dy))
 
     def update_spec(self, spec: SystemSpec):
         old_count = len(self.targets)
@@ -167,7 +240,6 @@ class SimulationEngine:
         if len(self.targets) != spec.target_count:
             self.init_targets()
         else:
-            # Update configs
             for i, target in enumerate(self.targets):
                 if i < len(spec.targets):
                     cfg = spec.targets[i]
@@ -202,7 +274,6 @@ class SimulationEngine:
             cv2.line(img, (rx, ry - half), (rx, ry + half), color, thickness)
 
         elif shape == "Custom" and custom_mask is not None:
-            # 32x32 binary mask scaled to target size
             mask_np = np.array(custom_mask, dtype=np.uint8) * 255
             if mask_np.shape[0] > 0 and mask_np.shape[1] > 0:
                 resized_mask = cv2.resize(mask_np, (size, size), interpolation=cv2.INTER_NEAREST)
@@ -220,14 +291,18 @@ class SimulationEngine:
                         for c in range(3):
                             img[y1:y2, x1:x2, c] = np.maximum(img[y1:y2, x1:x2, c], sub_mask)
         else:
-            # Default square
             cv2.rectangle(img, (rx - half, ry - half), (rx + half, ry + half), color, -1)
 
-    def step(self, dt: float) -> Tuple[str, Dict[str, Any]]:
+    def step_raw(self, dt: float = DT) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Updates physical dynamics using fixed DT, applies disturbance models,
+        renders the sensor FOV, and evaluates ground truth pointing metrics.
+        Returns raw numpy array and metrics without JPEG compression.
+        """
         self.sim_time += dt
         self.total_frames += 1
 
-        # 1. Step all targets
+        # 1. Step all targets using DT
         for target in self.targets:
             target.step(dt, self.sim_time, self.spec.screen_width, self.spec.screen_height)
 
@@ -255,7 +330,6 @@ class SimulationEngine:
         boresight_x = cw / 2.0
         boresight_y = ch / 2.0
 
-        # Determine Primary Target (closest to boresight or lock-maintained)
         in_fov_targets = []
         targets_info = []
 
@@ -264,7 +338,7 @@ class SimulationEngine:
             rel_y = target.y - (effective_cam_y - boresight_y)
             in_fov = (0 <= rel_x <= cw) and (0 <= rel_y <= ch)
             dist_to_bore = math.hypot(rel_x - boresight_x, rel_y - boresight_y) if in_fov else 9999.0
-            
+
             info = {
                 "id": target.id,
                 "world_pos": {"x": target.x, "y": target.y},
@@ -272,7 +346,10 @@ class SimulationEngine:
                 "in_fov": in_fov,
                 "dist_to_bore": dist_to_bore,
                 "shape": target.shape,
-                "size": target.size
+                "size": target.size,
+                "is_primary": (target.id == self.primary_target_id),
+                "x": target.x,
+                "y": target.y
             }
             targets_info.append(info)
             if in_fov:
@@ -281,18 +358,19 @@ class SimulationEngine:
         # Update primary target selection
         primary_info = None
         if in_fov_targets:
-            # Check if current primary is still in FOV
             current_primary = next((t for t in in_fov_targets if t["id"] == self.primary_target_id), None)
             if current_primary:
                 primary_info = current_primary
             else:
-                # Nearest to boresight
                 in_fov_targets.sort(key=lambda t: t["dist_to_bore"])
                 self.primary_target_id = in_fov_targets[0]["id"]
                 primary_info = in_fov_targets[0]
         else:
-            # If none in FOV, keep primary target ID
             primary_info = next((t for t in targets_info if t["id"] == self.primary_target_id), targets_info[0] if targets_info else None)
+
+        # Mark primary in targets_info
+        for t in targets_info:
+            t["is_primary"] = (t["id"] == self.primary_target_id)
 
         # 4. Render Camera FOV Frame
         is_mono = (self.spec.camera_type == "Monochrome")
@@ -307,8 +385,7 @@ class SimulationEngine:
                 mask = target_obj.custom_mask if target_obj else None
                 self.draw_shape(base_frame, t_info["shape"], rx, ry, t_info["size"], is_mono, mask)
 
-        # 5. Composable Disturbance Pipeline:
-        # frame -> noise -> atmosphere -> output
+        # 5. Composable Disturbance Pipeline using subsystem RNG
         frame_noisy = NoiseModel.apply(
             base_frame,
             master_intensity=self.spec.noise_master_intensity,
@@ -317,32 +394,177 @@ class SimulationEngine:
             gauss_enabled=self.spec.noise_gauss_enabled,
             gauss_std=self.spec.noise_gauss_std,
             poisson_enabled=self.spec.noise_poisson_enabled,
-            poisson_scale=self.spec.noise_poisson_scale
+            poisson_scale=self.spec.noise_poisson_scale,
+            rng=self.rng_registry.noise
         )
 
         frame_final = AtmosphereModel.apply(
             frame_noisy,
             condition=self.spec.atmospheric_disturbance,
             severity=self.spec.atmosphere_severity,
-            frame_idx=self.total_frames
+            frame_idx=self.total_frames,
+            rng=self.rng_registry.atmosphere
         )
 
-        # Encode JPEG base64
-        _, buffer = cv2.imencode('.jpg', frame_final, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        jpg_as_text = base64.b64encode(buffer).decode('utf-8')
+        # 6. Evaluate Ground Truth Pointing and R, M, K Metric State Machine
+        R = getattr(self.spec, "lock_radius_px", 12)
+        M = getattr(self.spec, "lock_frames_m", 3)
+        K = getattr(self.spec, "loss_frames_k", 5)
+
+        target_visible = primary_info["in_fov"] if primary_info else False
+        gt_camera_pos = primary_info["camera_pos"] if (primary_info and primary_info["in_fov"]) else None
+
+        old_lock_state = self.lock_state
+        if target_visible:
+            self.frames_with_target_visible += 1
+            if self.target_entered_fov_time is None:
+                self.target_entered_fov_time = self.sim_time
+
+            # Ground truth error relative to boresight
+            gt_err_px = math.hypot(gt_camera_pos["x"] - boresight_x, gt_camera_pos["y"] - boresight_y)
+            self.errors_history.append(gt_err_px)
+
+            if gt_err_px <= R:
+                self.consecutive_lock_count += 1
+                self.consecutive_loss_count = 0
+                if self.consecutive_lock_count >= M:
+                    self.lock_state = "TRACK"
+                    self.locked_frames += 1
+                    if self.first_locked_time is None:
+                        self.first_locked_time = self.sim_time
+                        self.acquisition_time_s = round(self.sim_time - (self.target_entered_fov_time or 0.0), 3)
+                    if self.loss_onset_time is not None:
+                        self.reacquisition_time_s = round(self.sim_time - self.loss_onset_time, 3)
+                        self.loss_onset_time = None
+                else:
+                    if self.lock_state in ["TRACK", "COAST"]:
+                        self.lock_state = "COAST"
+                    else:
+                        self.lock_state = "ACQUIRE"
+            else:
+                self.consecutive_lock_count = 0
+                self.consecutive_loss_count += 1
+                if self.consecutive_loss_count >= K:
+                    if self.loss_onset_time is None and self.lock_state in ["TRACK", "COAST"]:
+                        self.loss_onset_time = self.sim_time
+                    self.lock_state = "REACQUIRE"
+                    self.lost_frames += 1
+                else:
+                    if self.lock_state in ["TRACK", "COAST"]:
+                        self.lock_state = "COAST"
+                    else:
+                        self.lock_state = "SEARCH"
+        else:
+            self.consecutive_lock_count = 0
+            self.consecutive_loss_count += 1
+            if self.lock_state in ["TRACK", "COAST"]:
+                if self.loss_onset_time is None:
+                    self.loss_onset_time = self.sim_time
+                self.lock_state = "REACQUIRE"
+            else:
+                self.lock_state = "SEARCH"
+
+        if self.lock_state != old_lock_state:
+            reason = f"lock_cnt={self.consecutive_lock_count}, loss_cnt={self.consecutive_loss_count}"
+            if target_visible:
+                reason += f", err={gt_err_px:.1f}px"
+            else:
+                reason += ", target_out_of_fov"
+            self.log_transition(old_lock_state, self.lock_state, reason)
+
+        # Statistical aggregates
+        lock_retention_pct = (
+            (self.locked_frames / max(1, self.frames_with_target_visible)) * 100.0
+            if self.frames_with_target_visible > 0 else 100.0
+        )
+        target_loss_pct = 100.0 - lock_retention_pct
+
+        err_arr = np.array(self.errors_history) if self.errors_history else np.array([0.0])
+        err_mean = float(np.mean(err_arr))
+        err_rms = float(np.sqrt(np.mean(np.square(err_arr))))
+        err_p95 = float(np.percentile(err_arr, 95))
+        err_max = float(np.max(err_arr))
+        err_std = float(np.std(err_arr))
+
+        # Build full targets payload for multi-target frontend rendering
+        targets_payload = [
+            {
+                "id": t.id,
+                "x": round(t.x, 2),
+                "y": round(t.y, 2),
+                "shape": t.shape,
+                "size": t.size,
+                "is_primary": (t.id == self.primary_target_id)
+            }
+            for t in self.targets
+        ]
+
+        in_frame_error = gt_err_px if target_visible else 0.0
 
         sim_metrics = {
             "primary_target_id": self.primary_target_id,
             "target_world_pos": primary_info["world_pos"] if primary_info else {"x": 1000.0, "y": 1000.0},
             "camera_world_pos": {"x": self.cam_x, "y": self.cam_y},
             "effective_camera_pos": {"x": effective_cam_x, "y": effective_cam_y},
-            "target_camera_pos": primary_info["camera_pos"] if (primary_info and primary_info["in_fov"]) else None,
-            "target_in_fov": primary_info["in_fov"] if primary_info else False,
+            "target_camera_pos": gt_camera_pos,
+            "target_in_fov": target_visible,
             "all_targets": targets_info,
+            "targets": targets_payload,
             "jitter_offset": {"dx": jit_dx, "dy": jit_dy},
             "platform_offset": {"dx": plat_dx, "dy": plat_dy},
             "sim_duration_sec": round(self.sim_time, 2),
-            "boresight_pos": {"x": boresight_x, "y": boresight_y}
+            "sim_time_s": round(self.sim_time, 4),
+            "boresight_pos": {"x": boresight_x, "y": boresight_y},
+
+            # Phase 4 Defined Metric Contracts
+            "lock_state": self.lock_state,
+            "in_frame_error_px": round(in_frame_error, 2),
+            "true_pointing_error_px": round(in_frame_error, 2),
+            "tracking_error_px": round(in_frame_error, 2),
+            "error_mean_px": round(err_mean, 2),
+            "error_rms_px": round(err_rms, 2),
+            "error_p95_px": round(err_p95, 2),
+            "error_max_px": round(err_max, 2),
+            "error_std_px": round(err_std, 2),
+            "acquisition_time_s": self.acquisition_time_s,
+            "reacquisition_time_s": self.reacquisition_time_s,
+            "lock_retention_pct": round(lock_retention_pct, 1),
+            "target_loss_pct": round(target_loss_pct, 1),
+            "locked_frames": self.locked_frames,
+            "total_frames": self.total_frames,
+            "state_transitions": self.state_transitions[-10:] if self.state_transitions else [],
+            "state_transitions_count": len(self.state_transitions)
         }
 
+        return frame_final, sim_metrics
+
+    def step(self, dt: float = DT) -> Tuple[str, Dict[str, Any]]:
+        """
+        Full step including JPEG compression for WebSocket streaming.
+        """
+        frame_final, sim_metrics = self.step_raw(dt)
+        _, buffer = cv2.imencode('.jpg', frame_final, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        jpg_as_text = base64.b64encode(buffer).decode('utf-8')
         return f"data:image/jpeg;base64,{jpg_as_text}", sim_metrics
+
+    def get_session_summary(self) -> Dict[str, Any]:
+        err_arr = np.array(self.errors_history) if self.errors_history else np.array([0.0])
+        lock_retention_pct = (
+            (self.locked_frames / max(1, self.frames_with_target_visible)) * 100.0
+            if self.frames_with_target_visible > 0 else 100.0
+        )
+        return {
+            "total_frames": self.total_frames,
+            "sim_time_s": round(self.sim_time, 2),
+            "acquisition_time_s": self.acquisition_time_s,
+            "reacquisition_time_s": self.reacquisition_time_s,
+            "lock_retention_pct": round(lock_retention_pct, 1),
+            "target_loss_pct": round(100.0 - lock_retention_pct, 1),
+            "state_transitions_count": len(self.state_transitions),
+            "state_transitions": self.state_transitions,
+            "error_mean_px": round(float(np.mean(err_arr)), 2),
+            "error_rms_px": round(float(np.sqrt(np.mean(np.square(err_arr)))), 2),
+            "error_p95_px": round(float(np.percentile(err_arr, 95)), 2),
+            "error_max_px": round(float(np.max(err_arr)), 2),
+            "error_std_px": round(float(np.std(err_arr)), 2)
+        }

@@ -21,6 +21,7 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const trailsRef = useRef<Map<number, Array<{ x: number; y: number }>>>(new Map());
   const spec = useAppStore((state) => state.spec);
   const metrics = useAppStore((state) => state.metrics);
   const isCustomPathEditing = useAppStore((state) => state.isCustomPathEditing);
@@ -78,8 +79,79 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
       ctx.stroke();
     }
 
-    // Draw primary beacon history trail
-    if (targetTrail.length > 1) {
+    // Resolve active targets from metrics (backend allTargets / targets) or spec
+    const activeTargets = (metrics.allTargets && metrics.allTargets.length > 0)
+      ? metrics.allTargets
+      : (metrics.targets && metrics.targets.length > 0)
+        ? metrics.targets.map(t => ({
+            id: t.id,
+            worldPos: { x: t.x, y: t.y },
+            cameraPos: null,
+            inFov: false,
+            distToBore: 9999,
+            shape: t.shape,
+            size: t.size,
+            isPrimary: t.is_primary,
+            x: t.x,
+            y: t.y
+          }))
+        : (spec.targets && spec.targets.length > 0)
+          ? spec.targets.slice(0, spec.targetCount).map((st, idx) => ({
+              id: st.id || idx + 1,
+              worldPos: (st.id === metrics.primaryTargetId) ? targetWorldPos : { x: 1000 + (idx * 120), y: 1000 + (idx * 120) },
+              cameraPos: null,
+              inFov: false,
+              distToBore: 9999,
+              shape: st.shape || 'Square',
+              size: st.size || 10,
+              isPrimary: (st.id === metrics.primaryTargetId),
+              x: (st.id === metrics.primaryTargetId) ? targetWorldPos.x : 1000 + (idx * 120),
+              y: (st.id === metrics.primaryTargetId) ? targetWorldPos.y : 1000 + (idx * 120)
+            }))
+          : [{
+              id: 1,
+              worldPos: targetWorldPos,
+              cameraPos: null,
+              inFov: true,
+              distToBore: 0,
+              shape: spec.targetShape || 'Square',
+              size: spec.targetSize || 10,
+              isPrimary: true,
+              x: targetWorldPos.x,
+              y: targetWorldPos.y
+            }];
+
+    // Update trails per beacon
+    activeTargets.forEach((tgt) => {
+      const pos = tgt.worldPos || { x: tgt.x ?? 1000, y: tgt.y ?? 1000 };
+      let trail = trailsRef.current.get(tgt.id);
+      if (!trail) {
+        trail = [];
+        trailsRef.current.set(tgt.id, trail);
+      }
+      trail.push({ x: pos.x, y: pos.y });
+      if (trail.length > 60) trail.shift();
+    });
+
+    // Draw independent trail for each beacon
+    trailsRef.current.forEach((trail, tid) => {
+      if (trail.length > 1) {
+        const isPrimary = (tid === metrics.primaryTargetId);
+        ctx.beginPath();
+        ctx.strokeStyle = isPrimary ? 'rgba(237, 237, 237, 0.25)' : 'rgba(138, 138, 147, 0.18)';
+        ctx.lineWidth = 1;
+        trail.forEach((pt, i) => {
+          const tx = pt.x * scale;
+          const ty = pt.y * scale;
+          if (i === 0) ctx.moveTo(tx, ty);
+          else ctx.lineTo(tx, ty);
+        });
+        ctx.stroke();
+      }
+    });
+
+    // Fallback draw primary target trail if provided in props
+    if (trailsRef.current.size === 0 && targetTrail.length > 1) {
       ctx.beginPath();
       ctx.strokeStyle = 'rgba(237, 237, 237, 0.2)';
       ctx.lineWidth = 1;
@@ -146,25 +218,14 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
     ctx.lineTo(camCenterScaledX, camCenterScaledY + 4);
     ctx.stroke();
 
-    // Render Targets
-    const targetsToRender = (spec.targets && spec.targets.length > 0)
-      ? spec.targets.slice(0, spec.targetCount)
-      : [{
-          id: 1,
-          shape: spec.targetShape,
-          size: spec.targetSize,
-          initialLocation: spec.initialTargetLocation,
-          motion: spec.targetMotion,
-          speed: spec.targetSpeed,
-        }];
+    // Render All Active Beacons
+    activeTargets.forEach((tgt) => {
+      const isPrimary = tgt.isPrimary || (tgt.id === metrics.primaryTargetId);
+      const wx = (tgt.worldPos ? tgt.worldPos.x : (tgt.x ?? 1000)) * scale;
+      const wy = (tgt.worldPos ? tgt.worldPos.y : (tgt.y ?? 1000)) * scale;
 
-    targetsToRender.forEach((tgt) => {
-      let wx: number, wy: number;
-      if (tgt.id === metrics.primaryTargetId) {
-        wx = targetWorldPos.x * scale;
-        wy = targetWorldPos.y * scale;
-
-        // Primary Beacon: White/Accent
+      if (isPrimary) {
+        // Primary Beacon: White/Accent with outer ring and label
         ctx.fillStyle = '#EDEDED';
         ctx.beginPath();
         ctx.arc(wx, wy, 3.5, 0, Math.PI * 2);
@@ -175,17 +236,26 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
         ctx.beginPath();
         ctx.arc(wx, wy, 7, 0, Math.PI * 2);
         ctx.stroke();
-      } else {
-        const sec = metrics.secondaryTargets?.find((s) => s.id === tgt.id);
-        if (!sec) return;
-        wx = sec.worldPos.x * scale;
-        wy = sec.worldPos.y * scale;
 
-        // Secondary Beacons: Subtle grey
+        ctx.fillStyle = '#EDEDED';
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.fillText(`T${tgt.id} (P)`, wx + 9, wy - 4);
+      } else {
+        // Secondary Beacons: Subtle grey marker with secondary ring and label
         ctx.fillStyle = '#8A8A93';
         ctx.beginPath();
         ctx.arc(wx, wy, 2.5, 0, Math.PI * 2);
         ctx.fill();
+
+        ctx.strokeStyle = 'rgba(138, 138, 147, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(wx, wy, 5.5, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#8A8A93';
+        ctx.font = '9px "JetBrains Mono", monospace';
+        ctx.fillText(`T${tgt.id}`, wx + 7, wy - 3);
       }
     });
   }, [targetWorldPos, cameraWorldPos, targetTrail, camTrail, spec, metrics, isCustomPathEditing]);

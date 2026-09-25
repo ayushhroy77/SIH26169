@@ -19,11 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from spec import SystemSpec, DEFAULT_SPEC, VideoConfig, GTConfig, BenchmarkMetrics
-from simulation import SimulationEngine
+from simulation import SimulationEngine, DT
 from tracker import CentroidTracker
 from video_source import VideoSource
 from gt_extractor import parse_gt_csv, interpolate_marked_points, extract_auto_gt
 from benchmark import BenchmarkAggregator
+from session import config_hash, get_software_version, write_session_header
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -79,6 +80,18 @@ async def reset_simulation():
     global simulation
     simulation.reset()
     return {"status": "reset"}
+
+@app.get("/api/session/header")
+async def get_session_header():
+    version = get_software_version()
+    cfg = current_spec.__dict__
+    return {
+        "master_seed": simulation.master_seed,
+        "config_hash": config_hash(cfg),
+        "software_version": version,
+        "session_timestamp": time.time(),
+        "config": cfg
+    }
 
 # ═══════════════════════════════════════════════════════════════════
 # BENCHMARK-2 VIDEO INGESTION ENDPOINTS
@@ -239,21 +252,34 @@ async def websocket_telemetry(websocket: WebSocket):
     runs tracker + servo, and broadcasts metrics at 30 Hz.
     """
     await websocket.accept()
-    dt = 1.0 / max(1, current_spec.camera_update_rate)
+    session_start_time = time.time()
+    dt = DT  # Fixed simulated timestep (1.0 / 30.0 s)
     try:
         while True:
             t0 = time.perf_counter()
             frame_jpeg_b64, sim_metrics = simulation.step(dt)
+
+            t_track_0 = time.perf_counter()
             detected_centroid, track_metrics = tracker.process_frame(
                 frame_jpeg_b64,
                 sim_metrics["target_camera_pos"]
             )
+            t_track_end = time.perf_counter()
+            proc_ms = (t_track_end - t_track_0) * 1000.0
+
+            if "pan_cmd_deg_sec" in track_metrics and "tilt_cmd_deg_sec" in track_metrics:
+                simulation.apply_gimbal_slew(track_metrics["pan_cmd_deg_sec"], track_metrics["tilt_cmd_deg_sec"], dt)
+
             sim_metrics.update(track_metrics)
+            sim_metrics["processing_ms"] = round(proc_ms, 2)
+            sim_metrics["wall_time_s"] = round(time.time() - session_start_time, 2)
+            sim_metrics["fps_measured"] = round(1.0 / max(1e-4, time.perf_counter() - t0), 1)
 
             payload = {
                 "timestamp": int(time.time() * 1000),
                 "frame": frame_jpeg_b64,
-                "metrics": sim_metrics
+                "metrics": sim_metrics,
+                "targets": sim_metrics.get("targets", [])
             }
             await websocket.send_text(json.dumps(payload))
 

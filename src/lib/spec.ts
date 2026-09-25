@@ -87,6 +87,12 @@ export interface SystemSpec {
   kdPan: number;                                 // Derivative gain
   kdTilt: number;
 
+  // Phase 4: Defined Metric Configuration (R, M, K)
+  lockRadiusPx?: number;                         // Lock radius R (px)
+  lockFramesM?: number;                          // Lock confirmation frames M
+  lossFramesK?: number;                          // Loss confirmation frames K
+  gtSource?: string;                             // Ground truth source
+
   // 7. Input Mode
   inputMode: 'Virtual Simulation' | 'Video Ingest (Bypass PTZ)' | 'Benchmark-1 Scenario' | 'Benchmark-2 Validation' | 'Live Simulation' | 'Video Ingestion';
 }
@@ -109,6 +115,12 @@ export const DEFAULT_SPEC: SystemSpec = {
   cameraFov: { hDeg: 4.0, vDeg: 3.0 },
   cameraUpdateRate: 30,
   initialCameraPos: { x: 1000, y: 1000 },
+
+  // Phase 4 Defined Metrics
+  lockRadiusPx: 12,
+  lockFramesM: 3,
+  lossFramesK: 5,
+  gtSource: 'csv',
 
   targetType: 'Beacon Spot',
   targetCount: 1,
@@ -217,8 +229,24 @@ export interface TelemetryMetrics {
   // Phase 2 Multi-target and disturbances telemetry
   primaryTargetId: number;
   allTargets: TargetInfo[];
+  targets?: Array<{ id: number; x: number; y: number; shape: string; size: number; is_primary: boolean }>;
+  secondaryTargets?: TargetInfo[];
   jitterOffset?: { dx: number; dy: number };
   platformOffset?: { dx: number; dy: number };
+
+  // Phase 4 Defined Metrics
+  lockState?: 'SEARCH' | 'ACQUIRE' | 'TRACK' | 'COAST' | 'REACQUIRE';
+  inFrameErrorPx?: number;
+  truePointingErrorPx?: number;
+  errorMeanPx?: number;
+  errorRmsPx?: number;
+  errorP95Px?: number;
+  errorMaxPx?: number;
+  errorStdPx?: number;
+  simTimeS?: number;
+  wallTimeS?: number;
+  processingMs?: number;
+  fpsMeasured?: number;
 
   passAcquisition: boolean;
   passTrackingError: boolean;
