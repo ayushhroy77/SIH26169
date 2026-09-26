@@ -6,7 +6,7 @@
 ![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.9-5C3EE8?logo=opencv&logoColor=white)
-![License](https://img.shields.io/badge/license-unspecified-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 > A software testbed for coarse beacon acquisition and camera-tracking workflows in free-space optical communication (FSOC). Built as an entry for **Smart India Hackathon 2024**, under a Department of Space / ISRO problem statement — this is project documentation only, not an endorsement or certification by those organizations.
 
@@ -574,7 +574,8 @@ Confirmed in source (`backend/main.py`, `/ws/video/{video_id}` handler): `step` 
 - [ ] Remove or actually use the `@google/genai` and `express` dependencies
 - [ ] Document reproducible benchmark datasets, methodology, and measured results separately from target thresholds
 - [ ] Add production deployment assets (container definitions, CI workflows)
-- [ ] Select one canonical application version and add an explicit project license
+- [x] Add an explicit project license (MIT)
+- [ ] Select one canonical application version (Vite root vs. Next.js `frontend/`)
 
 ## Contributing
 
@@ -591,7 +592,7 @@ No project-specific coding standards are declared beyond the lint/test commands 
 
 ## License
 
-No `LICENSE` file is currently present in the repository, so **no open-source license is declared**. Do not assume redistribution or reuse is permitted until the maintainer adds a license.
+This project is licensed under the [MIT License](./LICENSE) — see the `LICENSE` file for the full text.
 
 ## Author
 
