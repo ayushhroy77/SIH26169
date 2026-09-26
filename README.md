@@ -602,6 +602,5 @@ This project is licensed under the [MIT License](./LICENSE) — see the `LICENSE
 
 ## Acknowledgements
 
-- Built as an entry for **Smart India Hackathon 2024**, under a Department of Space / ISRO problem statement (documentation only — not an endorsement).
-- Scaffolded via **Google AI Studio**.
+- Built as an entry for **Smart India Hackathon 2026**, under a Department of Space / ISRO problem statement (documentation only — not an endorsement).
 - Core libraries: React, Vite, Tailwind CSS, Zustand, Recharts, Lucide, Motion, Next.js, FastAPI, Uvicorn, Pydantic, OpenCV, NumPy.
