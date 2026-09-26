@@ -1,8 +1,44 @@
+﻿# Dependencies
 node_modules/
-build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
 dist/
-coverage/
+build/
+.next/
+out/
+
+# Session logs and runtime data
+sessions/
+reports/
+uploads/
+backend/uploads/
+
+# Large media files (test videos)
+*.mp4
+*.avi
+*.mov
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Logs
 *.log
-.env*
-!.env.example
+npm-debug.log*
+
+# Stray Next.js scaffold (dead code)
+frontend/

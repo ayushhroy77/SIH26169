@@ -23,6 +23,18 @@ export const VideoView: React.FC = () => {
   const [wsClient, setWsClient] = useState<VideoBenchmarkWebSocketClient | null>(null);
   const [frameImg, setFrameImg] = useState<HTMLImageElement | null>(null);
 
+  // Ref to hold current frame so the RAF loop doesn't need it in deps
+  const currentFrameRef = useRef(currentVideoFrame);
+  useEffect(() => {
+    currentFrameRef.current = currentVideoFrame;
+  }, [currentVideoFrame]);
+
+  // Ref to hold metrics so drawFrame can read them without depending on them
+  const metricsRef = useRef(benchmarkMetrics);
+  useEffect(() => {
+    metricsRef.current = benchmarkMetrics;
+  }, [benchmarkMetrics]);
+
   const synthStateRef = useRef({
     x: 320,
     y: 240,
@@ -32,6 +44,9 @@ export const VideoView: React.FC = () => {
     errors: [] as number[],
   });
 
+  // ────────────────────────────────────────────────────────────────
+  // WebSocket connection — only depends on videoId
+  // ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!videoConfig?.videoId || videoConfig.videoId === 'benchmark2_sim') return;
 
@@ -56,8 +71,12 @@ export const VideoView: React.FC = () => {
 
     setWsClient(client);
     return () => client.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoConfig?.videoId]);
 
+  // ────────────────────────────────────────────────────────────────
+  // Playback state → WebSocket command
+  // ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (wsClient) {
       if (videoPlaybackState === 'playing') wsClient.sendAction('play');
@@ -66,25 +85,33 @@ export const VideoView: React.FC = () => {
     }
   }, [videoPlaybackState, wsClient]);
 
+  // ────────────────────────────────────────────────────────────────
+  // Frame advance loop — uses ref, does NOT depend on currentVideoFrame
+  // ────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (videoPlaybackState !== 'playing') return;
+
     let animId: number;
     let lastTime = performance.now();
 
     const renderLoop = (now: number) => {
       const dt = (now - lastTime) / 1000;
-      if (videoPlaybackState === 'playing' && dt >= 1 / 30) {
+      if (dt >= 1 / 30) {
         lastTime = now;
         const total = videoConfig?.totalFrames || 360;
-        const nextFrame = (currentVideoFrame + 1) % total;
-        setCurrentVideoFrame(nextFrame);
+        setCurrentVideoFrame((currentFrameRef.current + 1) % total);
       }
       animId = requestAnimationFrame(renderLoop);
     };
 
     animId = requestAnimationFrame(renderLoop);
     return () => cancelAnimationFrame(animId);
-  }, [videoPlaybackState, currentVideoFrame, videoConfig?.totalFrames]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoPlaybackState, videoConfig?.totalFrames]);
 
+  // ────────────────────────────────────────────────────────────────
+  // drawFrame — reads metrics from ref, writes only on frame change
+  // ────────────────────────────────────────────────────────────────
   const drawFrame = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -97,6 +124,9 @@ export const VideoView: React.FC = () => {
       canvas.width = width;
       canvas.height = height;
     }
+
+    // Read latest metrics from ref (no dependency needed)
+    const metrics = metricsRef.current;
 
     if (frameImg) {
       ctx.drawImage(frameImg, 0, 0, width, height);
@@ -141,23 +171,28 @@ export const VideoView: React.FC = () => {
       const rmse = Math.sqrt(meanSq);
       const maxErr = Math.max(...errors);
 
-      updateBenchmarkMetrics({
-        frameIdx: currentVideoFrame,
-        detectedCentroid: { x: detX, y: detY },
-        detectedBbox: { x: detX - 14, y: detY - 14, w: 28, h: 28 },
-        gtCentroid: { x: gtPt[0], y: gtPt[1] },
-        centroidErrorPx: err,
-        rmsePx: rmse,
-        maxErrorPx: maxErr,
-        locked: err <= 15.0,
-        fpsMeasured: 29.8,
-        processingTimeMs: 4.6,
-        isApproximateGt: gtConfig.isApproximate,
-      });
+      // ✅ GUARD: only write to store if the frame changed — prevents render loop
+      const storedFrame = metricsRef.current.frameIdx;
+      if (storedFrame !== currentVideoFrame) {
+        updateBenchmarkMetrics({
+          frameIdx: currentVideoFrame,
+          detectedCentroid: { x: detX, y: detY },
+          detectedBbox: { x: detX - 14, y: detY - 14, w: 28, h: 28 },
+          gtCentroid: { x: gtPt[0], y: gtPt[1] },
+          centroidErrorPx: err,
+          rmsePx: rmse,
+          maxErrorPx: maxErr,
+          locked: err <= 15.0,
+          fpsMeasured: 29.8,
+          processingTimeMs: 4.6,
+          isApproximateGt: gtConfig.isApproximate,
+        });
+      }
     }
 
-    const det = benchmarkMetrics.detectedCentroid;
-    const gt = benchmarkMetrics.gtCentroid || gtConfig.gtTrack[currentVideoFrame]
+    // ── Overlay drawing (uses metrics from ref, safe) ──
+    const det = metrics.detectedCentroid;
+    const gt = metrics.gtCentroid || gtConfig.gtTrack[currentVideoFrame]
       ? { x: gtConfig.gtTrack[currentVideoFrame]?.[0] ?? 320, y: gtConfig.gtTrack[currentVideoFrame]?.[1] ?? 240 }
       : null;
 
@@ -199,7 +234,7 @@ export const VideoView: React.FC = () => {
     }
 
     if (det) {
-      const bbox = benchmarkMetrics.detectedBbox || { x: det.x - 14, y: det.y - 14, w: 28, h: 28 };
+      const bbox = metrics.detectedBbox || { x: det.x - 14, y: det.y - 14, w: 28, h: 28 };
 
       ctx.strokeStyle = 'rgba(34, 197, 94, 0.5)';
       ctx.lineWidth = 1.5;
@@ -236,12 +271,13 @@ export const VideoView: React.FC = () => {
 
       const midX = (det.x + gt.x) / 2;
       const midY = (det.y + gt.y) / 2;
-      const err = benchmarkMetrics.centroidErrorPx ?? Math.hypot(det.x - gt.x, det.y - gt.y);
+      const err = metrics.centroidErrorPx ?? Math.hypot(det.x - gt.x, det.y - gt.y);
       ctx.fillStyle = '#F43F5E';
       ctx.font = '9px monospace';
       ctx.fillText(`err: ${err.toFixed(1)}px`, midX + 4, midY - 4);
     }
 
+    // ── Top-left HUD panel ──
     ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
     ctx.fillRect(8, 8, 220, 68);
     ctx.strokeStyle = '#27272A';
@@ -257,14 +293,15 @@ export const VideoView: React.FC = () => {
     const tSec = (currentVideoFrame / 30.0).toFixed(2);
     ctx.fillText(`FRAME: ${currentVideoFrame} / ${tot} (t = ${tSec}s)`, 16, 38);
 
-    const rmseStr = (benchmarkMetrics.rmsePx ?? 0).toFixed(2);
-    const errStr = (benchmarkMetrics.centroidErrorPx ?? 0).toFixed(2);
+    const rmseStr = (metrics.rmsePx ?? 0).toFixed(2);
+    const errStr = (metrics.centroidErrorPx ?? 0).toFixed(2);
     ctx.fillText(`RMSE: ${rmseStr}px · ERR: ${errStr}px`, 16, 52);
 
-    const isLocked = benchmarkMetrics.locked;
+    const isLocked = metrics.locked;
     ctx.fillStyle = isLocked ? '#22C55E' : '#F43F5E';
     ctx.fillText(`STATUS: ${isLocked ? 'LOCKED (COARSE ALIGNED)' : 'ACQUIRING BEACON...'}`, 16, 66);
 
+    // ── Top-right HUD panel ──
     ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
     ctx.fillRect(width - 190, 8, 182, 54);
     ctx.strokeStyle = '#27272A';
@@ -272,26 +309,26 @@ export const VideoView: React.FC = () => {
 
     ctx.fillStyle = '#A1A1AA';
     ctx.font = '10px monospace';
-    const fpsStr = (benchmarkMetrics.fpsMeasured ?? 30).toFixed(1);
-    const msStr = (benchmarkMetrics.processingTimeMs ?? 4.2).toFixed(1);
+    const fpsStr = (metrics.fpsMeasured ?? 30).toFixed(1);
+    const msStr = (metrics.processingTimeMs ?? 4.2).toFixed(1);
     ctx.fillText(`FPS: ${fpsStr} · LATENCY: ${msStr}ms`, width - 182, 24);
 
     const gtModeStr = gtConfig.mode.toUpperCase();
     const approxStr = gtConfig.isApproximate ? 'APPROX' : 'VERIFIED';
     ctx.fillText(`GT: ${gtModeStr} [${approxStr}]`, width - 182, 38);
 
-    const lockPctStr = (benchmarkMetrics.lockRetentionPct ?? 100).toFixed(1);
+    const lockPctStr = (metrics.lockRetentionPct ?? 100).toFixed(1);
     ctx.fillText(`LOCK RETENTION: ${lockPctStr}%`, width - 182, 52);
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
     ctx.font = '9px sans-serif';
     ctx.fillText('SIH 2024 · DEPT OF SPACE / ISRO FSOC BENCHMARK-2', width - 268, height - 12);
   }, [
+    // ✅ benchmarkMetrics REMOVED from deps — read from ref instead
     frameImg,
     currentVideoFrame,
     videoConfig,
     gtConfig,
-    benchmarkMetrics,
     virtualBoresight,
     updateBenchmarkMetrics,
   ]);
@@ -331,9 +368,8 @@ export const VideoView: React.FC = () => {
         id="fsoc-video-canvas"
         ref={canvasRef}
         onClick={handleCanvasClick}
-        className={`max-w-full max-h-full object-contain rounded border border-[#27272A] shadow-2xl ${
-          gtConfig.mode === 'click' ? 'cursor-crosshair' : 'cursor-default'
-        }`}
+        className={`max-w-full max-h-full object-contain rounded border border-[#27272A] shadow-2xl ${gtConfig.mode === 'click' ? 'cursor-crosshair' : 'cursor-default'
+          }`}
       />
 
       {gtConfig.mode === 'click' && (
