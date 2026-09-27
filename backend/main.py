@@ -103,13 +103,21 @@ async def upload_video(file: UploadFile = File(...)):
     Accepts .mp4, .avi, .mov uploads, verifies resolution and frame rate,
     extracts thumbnail and auto-GT fallback, registers video session.
     """
-    filename = file.filename or "uploaded_video.mp4"
-    ext = os.path.splitext(filename)[1].lower()
+    # Security: never trust the client-supplied filename for path construction.
+    # Take only the basename (strips any directory / traversal components such
+    # as "../"), validate its extension, and store the ORIGINAL name separately
+    # as metadata rather than as part of the on-disk path.
+    raw_filename = file.filename or "uploaded_video.mp4"
+    safe_original_name = os.path.basename(raw_filename)
+    ext = os.path.splitext(safe_original_name)[1].lower()
     if ext not in [".mp4", ".avi", ".mov"]:
         raise HTTPException(status_code=400, detail="Invalid video format. Supported formats: .mp4, .avi, .mov")
 
     video_id = str(uuid.uuid4())[:8]
-    save_path = os.path.join(UPLOAD_DIR, f"{video_id}_{filename}")
+    filename = safe_original_name
+    # The on-disk filename is generated entirely server-side (video_id + extension
+    # only) so nothing from the client ever reaches the filesystem path.
+    save_path = os.path.join(UPLOAD_DIR, f"{video_id}{ext}")
 
     try:
         with open(save_path, "wb") as buffer:
@@ -325,6 +333,9 @@ async def websocket_video_benchmark(websocket: WebSocket, video_id: str):
     fps = source.fps() or 30.0
     dt = 1.0 / fps
     is_paused = False
+    # step_once: when True, exactly one frame is allowed through even though
+    # is_paused is True, letting the client single-step frame-by-frame.
+    step_once = False
 
     try:
         while True:
@@ -337,11 +348,13 @@ async def websocket_video_benchmark(websocket: WebSocket, video_id: str):
                 action = cmd_data.get("action")
                 if action == "pause":
                     is_paused = True
+                    step_once = False
                 elif action == "play":
                     is_paused = False
+                    step_once = False
                 elif action == "step":
                     is_paused = True
-                    # Allow one single step forward
+                    step_once = True  # Allow exactly one frame through below, then re-pause
                 elif action == "seek":
                     target_frame = int(cmd_data.get("frame_idx", 0))
                     source.seek(target_frame)
@@ -349,12 +362,19 @@ async def websocket_video_benchmark(websocket: WebSocket, video_id: str):
                     source.reset()
                     aggregator.reset()
                     is_paused = False
+                    step_once = False
             except (asyncio.TimeoutError, json.JSONDecodeError):
                 pass
 
-            if is_paused:
+            if is_paused and not step_once:
                 await asyncio.sleep(0.05)
                 continue
+
+            # A "step" request only ever lets a single frame through per
+            # client request; consume the allowance now so the next loop
+            # iteration goes back to being paused.
+            if step_once:
+                step_once = False
 
             frame_idx = source.current_frame_idx()
             b64_frame, raw_frame, timestamp_s = source.read_jpeg_b64()

@@ -64,9 +64,10 @@ class NoiseModel:
                 else:
                     out[y_coords, x_coords] = [0.0, 0.0, 0.0]
 
-        # 2. Gaussian Noise (mean 0, std-dev 0-20 px)
+        # 2. Gaussian Noise (mean 0, std-dev 0-20 px per spec item 22 — hard-clamped)
         if gauss_enabled and gauss_std > 0:
-            effective_sigma = gauss_std * master_intensity
+            clamped_std = min(20.0, max(0.0, gauss_std))
+            effective_sigma = clamped_std * master_intensity
             noise = r.normal(0, effective_sigma, frame.shape)
             out = out + noise
 
