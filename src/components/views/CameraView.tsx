@@ -14,6 +14,73 @@ interface CameraViewProps {
   fps: number;
 }
 
+// ── Shape-aware beacon renderer (matches SceneCanvas) ──────────
+function drawBeaconShape(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  shape: string
+): void {
+  const half = size / 2;
+
+  switch (shape) {
+    case 'Circle':
+      ctx.beginPath();
+      ctx.arc(x, y, half, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+
+    case 'Triangle':
+      ctx.beginPath();
+      ctx.moveTo(x, y - half);
+      ctx.lineTo(x + half, y + half);
+      ctx.lineTo(x - half, y + half);
+      ctx.closePath();
+      ctx.fill();
+      break;
+
+    case 'Cross': {
+      const arm = Math.max(1.5, size / 4);
+      ctx.fillRect(x - arm, y - half, arm * 2, size);
+      ctx.fillRect(x - half, y - arm, size, arm * 2);
+      break;
+    }
+
+    case 'Custom': {
+      const mask = (window as any).__fsoc_custom_mask as number[][] | undefined;
+      if (mask && mask.length === 32) {
+        const cellW = size / 32;
+        const cellH = size / 32;
+        const ox = x - half;
+        const oy = y - half;
+        for (let r = 0; r < 32; r++) {
+          for (let c = 0; c < 32; c++) {
+            if (mask[r] && mask[r][c]) {
+              ctx.fillRect(ox + c * cellW, oy + r * cellH, cellW + 0.5, cellH + 0.5);
+            }
+          }
+        }
+      } else {
+        // Fallback: diamond
+        ctx.beginPath();
+        ctx.moveTo(x, y - half);
+        ctx.lineTo(x + half, y);
+        ctx.lineTo(x, y + half);
+        ctx.lineTo(x - half, y);
+        ctx.closePath();
+        ctx.fill();
+      }
+      break;
+    }
+
+    case 'Square':
+    default:
+      ctx.fillRect(x - half, y - half, size, size);
+      break;
+  }
+}
+
 export const CameraView: React.FC<CameraViewProps> = ({
   detectedCentroid,
   targetCameraPos,
@@ -126,7 +193,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
       }
     }
 
-    // 5. Render All Configured Optical Targets inside FOV
+    // 5. Render All Configured Optical Targets inside FOV — SHAPE-AWARE
     const activeTargets = (metrics.allTargets && metrics.allTargets.length > 0)
       ? metrics.allTargets
       : (spec.targets && spec.targets.length > 0)
@@ -150,7 +217,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
             isPrimary: true,
           }];
 
-    activeTargets.forEach((tgt) => {
+    activeTargets.forEach((tgt: any) => {
       let tx: number, ty: number, inFov: boolean;
       if (tgt.cameraPos) {
         tx = tgt.cameraPos.x;
@@ -167,23 +234,22 @@ export const CameraView: React.FC<CameraViewProps> = ({
       if (!inFov || tx < -40 || tx > width + 40 || ty < -40 || ty > height + 40) return;
 
       const baseSize = tgt.size || 10;
-      let targetColor = spec.cameraType === 'Monochrome' ? '#EDEDED' : '#5B8DEF';
+      const shape = tgt.shape || 'Square';
+      const targetColor = spec.cameraType === 'Monochrome' ? '#EDEDED' : '#5B8DEF';
 
-      // Draw synthetic optical spot
-      const grad = ctx.createRadialGradient(tx, ty, 1, tx, ty, baseSize * 1.8);
+      // Draw synthetic optical spot — SHAPE-AWARE
+      const glowSize = baseSize * 1.8;
+      const grad = ctx.createRadialGradient(tx, ty, 1, tx, ty, glowSize);
       grad.addColorStop(0, targetColor);
       grad.addColorStop(0.5, targetColor);
       grad.addColorStop(1, 'rgba(0,0,0,0)');
 
       ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(tx, ty, baseSize * 1.8, 0, Math.PI * 2);
-      ctx.fill();
+      drawBeaconShape(ctx, tx, ty, glowSize, shape);
 
+      // Bright core — SHAPE-AWARE
       ctx.fillStyle = '#FFFFFF';
-      ctx.beginPath();
-      ctx.arc(tx, ty, Math.max(1.5, baseSize * 0.35), 0, Math.PI * 2);
-      ctx.fill();
+      drawBeaconShape(ctx, tx, ty, Math.max(2, baseSize * 0.7), shape);
     });
 
     // 6. Disturbances: Image Noise
@@ -284,7 +350,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
         />
       </div>
 
-      {/* 32px Telemetry Strip (directly below feed): FOV 5°×3° · 30 Hz · PAN 0.42°/s · TILT 0.33°/s · MAX 5°/s */}
+      {/* 32px Telemetry Strip */}
       <div className="h-8 flex items-center justify-center text-[11px] font-mono text-[#8A8A93] tracking-tight border-b border-[#1F1F23]/30 truncate">
         <span>FOV {spec.cameraFov.hDeg}°×{spec.cameraFov.vDeg}°</span>
         <span className="mx-2 text-[#5C5C66]">·</span>

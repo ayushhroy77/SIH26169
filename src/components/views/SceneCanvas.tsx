@@ -12,6 +12,76 @@ interface SceneCanvasProps {
   onSetTargetPos?: SetTargetFn;
 }
 
+// ── Shape-aware beacon renderer ─────────────────────────────────
+// Draws the beacon in the requested shape, centered at (x, y),
+// with the given pixel size. Uses the current ctx.fillStyle.
+function drawBeaconShape(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  shape: string
+): void {
+  const half = size / 2;
+
+  switch (shape) {
+    case 'Circle':
+      ctx.beginPath();
+      ctx.arc(x, y, half, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+
+    case 'Triangle':
+      ctx.beginPath();
+      ctx.moveTo(x, y - half);
+      ctx.lineTo(x + half, y + half);
+      ctx.lineTo(x - half, y + half);
+      ctx.closePath();
+      ctx.fill();
+      break;
+
+    case 'Cross': {
+      const arm = Math.max(1.5, size / 4);
+      ctx.fillRect(x - arm, y - half, arm * 2, size);
+      ctx.fillRect(x - half, y - arm, size, arm * 2);
+      break;
+    }
+
+    case 'Custom': {
+      // Read the 32×32 mask if available (set by ShapeMaskEditor)
+      const mask = (window as any).__fsoc_custom_mask as number[][] | undefined;
+      if (mask && mask.length === 32) {
+        const cellW = size / 32;
+        const cellH = size / 32;
+        const ox = x - half;
+        const oy = y - half;
+        for (let r = 0; r < 32; r++) {
+          for (let c = 0; c < 32; c++) {
+            if (mask[r] && mask[r][c]) {
+              ctx.fillRect(ox + c * cellW, oy + r * cellH, cellW + 0.5, cellH + 0.5);
+            }
+          }
+        }
+      } else {
+        // Fallback: draw a diamond
+        ctx.beginPath();
+        ctx.moveTo(x, y - half);
+        ctx.lineTo(x + half, y);
+        ctx.lineTo(x, y + half);
+        ctx.lineTo(x - half, y);
+        ctx.closePath();
+        ctx.fill();
+      }
+      break;
+    }
+
+    case 'Square':
+    default:
+      ctx.fillRect(x - half, y - half, size, size);
+      break;
+  }
+}
+
 export const SceneCanvas: React.FC<SceneCanvasProps> = ({
   targetWorldPos,
   cameraWorldPos,
@@ -218,39 +288,38 @@ export const SceneCanvas: React.FC<SceneCanvasProps> = ({
     ctx.lineTo(camCenterScaledX, camCenterScaledY + 4);
     ctx.stroke();
 
-    // Render All Active Beacons
+    // Render All Active Beacons — shape-aware
     activeTargets.forEach((tgt) => {
       const isPrimary = tgt.isPrimary || (tgt.id === metrics.primaryTargetId);
       const wx = (tgt.worldPos ? tgt.worldPos.x : (tgt.x ?? 1000)) * scale;
       const wy = (tgt.worldPos ? tgt.worldPos.y : (tgt.y ?? 1000)) * scale;
+      const shape = tgt.shape || 'Square';
+      // On scene canvas the world is scaled ~0.25, so use visual sizes
+      const visualSize = isPrimary ? 8 : 5;
 
       if (isPrimary) {
-        // Primary Beacon: White/Accent with outer ring and label
+        // Primary Beacon: shape-aware white/accent with outer ring and label
         ctx.fillStyle = '#EDEDED';
-        ctx.beginPath();
-        ctx.arc(wx, wy, 3.5, 0, Math.PI * 2);
-        ctx.fill();
+        drawBeaconShape(ctx, wx, wy, visualSize, shape);
 
         ctx.strokeStyle = '#5B8DEF';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(wx, wy, 7, 0, Math.PI * 2);
+        ctx.arc(wx, wy, Math.max(7, visualSize * 0.9), 0, Math.PI * 2);
         ctx.stroke();
 
         ctx.fillStyle = '#EDEDED';
         ctx.font = '10px "JetBrains Mono", monospace';
         ctx.fillText(`T${tgt.id} (P)`, wx + 9, wy - 4);
       } else {
-        // Secondary Beacons: Subtle grey marker with secondary ring and label
+        // Secondary Beacons: shape-aware subtle grey with ring and label
         ctx.fillStyle = '#8A8A93';
-        ctx.beginPath();
-        ctx.arc(wx, wy, 2.5, 0, Math.PI * 2);
-        ctx.fill();
+        drawBeaconShape(ctx, wx, wy, visualSize, shape);
 
         ctx.strokeStyle = 'rgba(138, 138, 147, 0.6)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(wx, wy, 5.5, 0, Math.PI * 2);
+        ctx.arc(wx, wy, Math.max(5.5, visualSize * 0.9), 0, Math.PI * 2);
         ctx.stroke();
 
         ctx.fillStyle = '#8A8A93';

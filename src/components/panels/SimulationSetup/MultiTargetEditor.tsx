@@ -38,11 +38,16 @@ export const MultiTargetEditor: React.FC = () => {
       if (partial.motion !== undefined) mirrored.targetMotion = partial.motion;
       if (partial.speed !== undefined) mirrored.targetSpeed = partial.speed;
       if (partial.initialLocation !== undefined) mirrored.initialTargetLocation = partial.initialLocation;
+      if (partial.customPos !== undefined) mirrored.customTargetPos = partial.customPos;
       updateSpec(mirrored);
     }
   };
 
   const isPrimary = activeTarget.id === metrics.primaryTargetId;
+
+  // Default X/Y for the current target's custom position
+  const customX = activeTarget.customPos?.x ?? 1000;
+  const customY = activeTarget.customPos?.y ?? 1000;
 
   return (
     <div className="space-y-3 select-none">
@@ -118,9 +123,66 @@ export const MultiTargetEditor: React.FC = () => {
               label="Spawn Location"
               value={activeTarget.initialLocation}
               options={['Random', 'Center', 'Custom']}
-              onChange={(val) => handleUpdate({ initialLocation: val as any })}
+              onChange={(val) => {
+                const patch: Partial<TargetConfig> = { initialLocation: val as any };
+                if (val === 'Custom' && !activeTarget.customPos) {
+                  patch.customPos = { x: 1000, y: 1000 };
+                }
+                handleUpdate(patch);
+              }}
             />
           </div>
+
+          {/* ── Custom X/Y inputs (only when spawn location = Custom) ── */}
+          {activeTarget.initialLocation === 'Custom' && (
+            <div className="grid grid-cols-2 gap-2.5 p-2.5 rounded bg-[#17171A] border border-[#1F1F23]/60">
+              <div>
+                <label
+                  htmlFor={`custom-x-${activeTarget.id}`}
+                  className="text-[11px] text-[#8A8A93] mb-1 block font-mono"
+                >
+                  X (px)
+                </label>
+                <input
+                  id={`custom-x-${activeTarget.id}`}
+                  type="number"
+                  min={0}
+                  max={2000}
+                  step={10}
+                  value={customX}
+                  onChange={(e) => {
+                    const next = Math.max(0, Math.min(2000, Number(e.target.value) || 0));
+                    handleUpdate({ customPos: { x: next, y: customY } });
+                  }}
+                  className="w-full px-2 py-1 bg-[#0E0E10] border border-[#1F1F23] rounded text-[12px] text-[#EDEDED] font-mono tabular-nums focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#5B8DEF]"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor={`custom-y-${activeTarget.id}`}
+                  className="text-[11px] text-[#8A8A93] mb-1 block font-mono"
+                >
+                  Y (px)
+                </label>
+                <input
+                  id={`custom-y-${activeTarget.id}`}
+                  type="number"
+                  min={0}
+                  max={2000}
+                  step={10}
+                  value={customY}
+                  onChange={(e) => {
+                    const next = Math.max(0, Math.min(2000, Number(e.target.value) || 0));
+                    handleUpdate({ customPos: { x: customX, y: next } });
+                  }}
+                  className="w-full px-2 py-1 bg-[#0E0E10] border border-[#1F1F23] rounded text-[12px] text-[#EDEDED] font-mono tabular-nums focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#5B8DEF]"
+                />
+              </div>
+              <div className="col-span-2 text-[10px] text-[#5C5C66] font-mono">
+                Beacon will spawn at ({customX}, {customY}) px on the 2000×2000 canvas
+              </div>
+            </div>
+          )}
 
           {activeTarget.shape === 'Custom' && (
             <div>
