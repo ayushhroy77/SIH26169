@@ -10,6 +10,7 @@ import {
   GTConfig,
   BenchmarkMetrics
 } from './spec';
+import { CnnCandidate } from '../components/views/CNNView/types';
 
 export type NavTab = 
   | 'simulation'
@@ -43,6 +44,18 @@ interface AppStore {
   // Mode Switcher Slice (Phase 3: Live Simulation vs Video Ingestion)
   inputMode: InputModeType;
   setInputMode: (mode: InputModeType) => void;
+
+  // Scene Dimension View Mode (2D Canvas vs 3D Spatial Universe vs CNN Classifier View)
+  sceneMode: '2d' | '3d' | 'cnn';
+  setSceneMode: (mode: '2d' | '3d' | 'cnn') => void;
+
+  // CNN Visualization Slice
+  cnnViewEnabled: boolean;
+  setCnnViewEnabled: (enabled: boolean) => void;
+  cnnCandidates: CnnCandidate[];
+  setCnnCandidates: (candidates: CnnCandidate[]) => void;
+  cnnThreshold: number;
+  setCnnThreshold: (threshold: number) => void;
 
   // Phase 2 Interactive editors
   isCustomPathEditing: boolean;
@@ -223,6 +236,17 @@ export const useAppStore = create<AppStore>((set) => ({
       isRunning: mode === 'Live Simulation',
       videoPlaybackState: mode === 'Video Ingestion' ? 'playing' : 'stopped',
     })),
+
+  sceneMode: '2d',
+  setSceneMode: (mode) => set({ sceneMode: mode }),
+
+  // CNN Visualization State
+  cnnViewEnabled: false,
+  setCnnViewEnabled: (enabled) => set({ cnnViewEnabled: enabled }),
+  cnnCandidates: [],
+  setCnnCandidates: (candidates) => set({ cnnCandidates: candidates }),
+  cnnThreshold: 0.5,
+  setCnnThreshold: (threshold) => set({ cnnThreshold: threshold }),
 
   isCustomPathEditing: false,
   setIsCustomPathEditing: (editing) => set({ isCustomPathEditing: editing }),

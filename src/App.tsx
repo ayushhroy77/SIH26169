@@ -10,8 +10,10 @@ import { createInitialSimState, stepSimulation, SimState } from './lib/simulatio
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { SceneCanvas } from './components/views/SceneCanvas';
+import { SceneView3D } from './components/views/SceneView3D';
 import { CameraView } from './components/views/CameraView';
 import { VideoView } from './components/views/VideoView';
+import { CNNView } from './components/views/CNNView';
 import { SimulationSetup } from './components/panels/SimulationSetup';
 import { CameraControls } from './components/panels/CameraControls';
 import { Disturbances } from './components/panels/Disturbances';
@@ -34,6 +36,7 @@ export default function App() {
   const theme = useAppStore((state) => state.theme);
   const metrics = useAppStore((state) => state.metrics);
   const inputMode = useAppStore((state) => state.inputMode);
+  const sceneMode = useAppStore((state) => state.sceneMode);
   const benchmarkMetrics = useAppStore((state) => state.benchmarkMetrics);
 
   const simStateRef = useRef<SimState>(createInitialSimState(spec));
@@ -135,27 +138,38 @@ export default function App() {
                 <VideoView />
               </div>
             ) : (
-              /* Phase 1/2 Dual Live Views: 2000x2000 Scene Canvas + 640x480 Virtual Camera Sensor Viewport */
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-1 min-h-[460px]">
-                <SceneCanvas
-                  targetWorldPos={metrics.targetWorldPos}
-                  cameraWorldPos={metrics.cameraWorldPos}
-                  targetTrail={simStateRef.current?.targetTrail || []}
-                  camTrail={simStateRef.current?.camTrail || []}
-                  onSetTargetPos={handleSetTargetPos}
-                />
-
-                <CameraView
-                  detectedCentroid={metrics.detectedCentroid}
-                  targetCameraPos={metrics.targetCameraPos}
-                  boresightPos={metrics.boresightPos}
-                  targetInFov={metrics.targetInFov}
-                  trackingErrorPx={metrics.trackingErrorPx}
-                  trackingErrorDeg={metrics.trackingErrorDeg}
-                  panSpeedDegSec={metrics.panSpeedDegSec}
-                  tiltSpeedDegSec={metrics.tiltSpeedDegSec}
-                  fps={metrics.fps}
-                />
+              /* Phase 1/2 Dual Live Views: 2000x2000 Scene Canvas (2D/3D) + 640x480 Virtual Camera Sensor Viewport */
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 flex-1 min-h-[500px]">
+                {sceneMode === '2d' ? (
+                  <>
+                    <SceneCanvas
+                      targetWorldPos={metrics.targetWorldPos}
+                      cameraWorldPos={metrics.cameraWorldPos}
+                      targetTrail={simStateRef.current?.targetTrail || []}
+                      camTrail={simStateRef.current?.camTrail || []}
+                      onSetTargetPos={handleSetTargetPos}
+                    />
+                    <CameraView
+                      detectedCentroid={metrics.detectedCentroid}
+                      targetCameraPos={metrics.targetCameraPos}
+                      boresightPos={metrics.boresightPos}
+                      targetInFov={metrics.targetInFov}
+                      trackingErrorPx={metrics.trackingErrorPx}
+                      trackingErrorDeg={metrics.trackingErrorDeg}
+                      panSpeedDegSec={metrics.panSpeedDegSec}
+                      tiltSpeedDegSec={metrics.tiltSpeedDegSec}
+                      fps={metrics.fps}
+                    />
+                  </>
+                ) : sceneMode === '3d' ? (
+                  <div className="col-span-2">
+                    <SceneView3D targetTrail={simStateRef.current?.targetTrail || []} />
+                  </div>
+                ) : (
+                  <div className="col-span-2">
+                    <CNNView />
+                  </div>
+                )}
               </div>
             )}
 

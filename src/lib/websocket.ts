@@ -30,9 +30,9 @@ export interface VideoWSMessagePayload {
 function getWsBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.hostname}:8000`;
+    return `${proto}//${window.location.host}`;
   }
-  return 'ws://localhost:8000';
+  return 'ws://localhost:3000';
 }
 
 export class TelemetryWebSocketClient {

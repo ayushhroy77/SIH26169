@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
+import { SpecChip } from './SpecChip';
 
 interface CollapsibleProps {
   title: string;
@@ -7,6 +8,8 @@ interface CollapsibleProps {
   isOpen?: boolean;
   onToggle?: (open: boolean) => void;
   badge?: React.ReactNode;
+  specCode?: string;
+  specDescription?: string;
   children: React.ReactNode;
   className?: string;
 }
@@ -17,6 +20,8 @@ export const Collapsible: React.FC<CollapsibleProps> = ({
   isOpen: controlledIsOpen,
   onToggle,
   badge,
+  specCode,
+  specDescription,
   children,
   className = '',
 }) => {
@@ -45,6 +50,7 @@ export const Collapsible: React.FC<CollapsibleProps> = ({
             }`}
           />
           <span className="text-[13px] font-medium tracking-tight text-[#EDEDED]">{title}</span>
+          {specCode && <SpecChip code={specCode} description={specDescription} />}
         </div>
         {badge && <div className="text-[11px] text-[#8A8A93]">{badge}</div>}
       </button>

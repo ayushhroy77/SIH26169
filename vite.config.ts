@@ -64,29 +64,57 @@ function aistudioMediaPlugin(): Plugin {
 }
 // LINT.ThenChange(//depot/google3/java/com/google/alkali/boq/makersuite/applet_dev_service/templates/initializers/react_theme/vite.config.ts:aistudio_media_plugin)
 
+function mockApiPlugin(): Plugin {
+  return {
+    name: 'mock-fsoc-api',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url && req.url.startsWith('/api/')) {
+          res.setHeader('Content-Type', 'application/json');
+          if (req.url.startsWith('/api/health')) {
+            res.end(JSON.stringify({ status: 'ok', service: 'fsoc-tracking-client', fps_target: 30 }));
+            return;
+          }
+          if (req.url.startsWith('/api/video/upload')) {
+            const vidId = 'vid_' + Math.random().toString(36).substring(2, 9);
+            res.end(JSON.stringify({
+              video_id: vidId,
+              filename: 'uploaded_video.mp4',
+              width: 640,
+              height: 480,
+              fps: 30.0,
+              duration_sec: 10.0,
+              total_frames: 300,
+            }));
+            return;
+          }
+          if (req.url.includes('/gt')) {
+            res.end(JSON.stringify({ status: 'ok', points_count: 300 }));
+            return;
+          }
+          res.end(JSON.stringify({ status: 'ok' }));
+          return;
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss(), aistudioMediaPlugin()],
+    plugins: [react(), tailwindcss(), aistudioMediaPlugin(), mockApiPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
     },
     server: {
+      host: '0.0.0.0',
+      port: 3000,
+      allowedHosts: true as const,
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
-      proxy: {
-        '/api': {
-          target: 'http://localhost:8000',
-          changeOrigin: true,
-          secure: false,
-        },
-        '/ws': {
-          target: 'ws://localhost:8000',
-          ws: true,
-          changeOrigin: true,
-        },
-      },
     },
   };
 });

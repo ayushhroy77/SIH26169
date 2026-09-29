@@ -126,7 +126,7 @@ export const VideoIngestion: React.FC = () => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch('http://localhost:8000/api/video/upload', {
+      const res = await fetch('/api/video/upload', {
         method: 'POST',
         body: formData,
       });

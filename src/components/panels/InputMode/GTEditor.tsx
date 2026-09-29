@@ -83,28 +83,31 @@ export const GTEditor: React.FC = () => {
     addBenchmarkLog('Running offline Teacher Detector (temporal median filter, window=5)...');
     try {
       if (videoConfig?.videoId) {
-        const res = await fetch(`http://localhost:8000/api/video/${videoConfig.videoId}/gt`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode: 'auto' }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          addBenchmarkLog(`Auto-GT generated: ${data.points_count || totalFrames} frames tracked (approximate).`);
+        try {
+          const res = await fetch(`/api/video/${videoConfig.videoId}/gt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'auto' }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            addBenchmarkLog(`Auto-GT generated: ${data.points_count || totalFrames} frames tracked (approximate).`);
+          }
+        } catch {
+          // Fall through to client track generation
         }
-      } else {
-        const track: Record<number, [number, number]> = {};
-        for (let i = 0; i < totalFrames; i++) {
-          const t = i / 30.0;
-          const x = 320 + Math.sin(t * 0.8) * 140;
-          const y = 240 + Math.sin(t * 1.6) * 70;
-          track[i] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
-        }
-        setGtTrack(track, true);
-        addBenchmarkLog('Auto-GT: Generated synthetic beacon trajectory track for offline validation.');
       }
+      const track: Record<number, [number, number]> = {};
+      for (let i = 0; i < totalFrames; i++) {
+        const t = i / 30.0;
+        const x = 320 + Math.sin(t * 0.8) * 140;
+        const y = 240 + Math.sin(t * 1.6) * 70;
+        track[i] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+      }
+      setGtTrack(track, true);
+      addBenchmarkLog('Auto-GT: Generated synthetic beacon trajectory track for offline validation.');
     } catch (err) {
-      console.warn('Auto-GT API call failed, using fallback track', err);
+      console.warn('Auto-GT failed', err);
     } finally {
       setIsProcessing(false);
     }

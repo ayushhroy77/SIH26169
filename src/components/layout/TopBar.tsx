@@ -3,7 +3,7 @@ import { useAppStore } from '../../lib/store';
 import { StatusPill } from '../ui/StatusPill';
 import { ModeSwitcher } from '../panels/InputMode/ModeSwitcher';
 import { SpecChip } from '../ui/SpecChip';
-import { Radio, HelpCircle, Play, Pause, RotateCcw } from 'lucide-react';
+import { Radio, HelpCircle, Play, Pause, RotateCcw, Box, Cpu } from 'lucide-react';
 
 export const TopBar: React.FC = () => {
   const isRunning = useAppStore((state) => state.isRunning);
@@ -13,6 +13,8 @@ export const TopBar: React.FC = () => {
   const metrics = useAppStore((state) => state.metrics);
   const benchmarkMetrics = useAppStore((state) => state.benchmarkMetrics);
   const inputMode = useAppStore((state) => state.inputMode);
+  const sceneMode = useAppStore((state) => state.sceneMode);
+  const setSceneMode = useAppStore((state) => state.setSceneMode);
 
   const isVideo = inputMode === 'Video Ingestion';
   const currentFps = isVideo ? benchmarkMetrics.fpsMeasured : metrics.fps;
@@ -41,6 +43,50 @@ export const TopBar: React.FC = () => {
 
         {/* Center-left: Mode Switcher */}
         <ModeSwitcher />
+
+        <div className="h-4 w-px bg-[#1F1F23]/40 mx-1 hidden sm:block" />
+
+        {/* 2D / 3D Space View Toggle */}
+        <div className="flex items-center rounded bg-[#17171A] border border-[#1F1F23]/60 p-0.5 text-xs font-mono">
+          <button
+            type="button"
+            onClick={() => setSceneMode('2d')}
+            className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+              sceneMode === '2d'
+                ? 'bg-[#1F1F23] text-[#EDEDED] shadow-sm'
+                : 'text-[#8A8A93] hover:text-[#EDEDED]'
+            }`}
+            title="2D Top-Down Universe View (2000x2000)"
+          >
+            2D View
+          </button>
+          <button
+            type="button"
+            onClick={() => setSceneMode('3d')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+              sceneMode === '3d'
+                ? 'bg-[#06b6d4]/20 border border-[#06b6d4]/40 text-[#06b6d4] font-semibold shadow-sm'
+                : 'text-[#8A8A93] hover:text-[#EDEDED]'
+            }`}
+            title="3D Deep Space View (Host Satellite, Gimbal, Frustum & Beacon)"
+          >
+            <Box className="w-3 h-3 text-[#06b6d4]" />
+            <span>3D View</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSceneMode('cnn')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+              sceneMode === 'cnn'
+                ? 'bg-[#3FB950]/20 border border-[#3FB950]/40 text-[#3FB950] font-semibold shadow-sm'
+                : 'text-[#8A8A93] hover:text-[#EDEDED]'
+            }`}
+            title="CNN Classifier Diagnostics View (Candidate Patches, Bounding Boxes & Cutoff)"
+          >
+            <Cpu className="w-3 h-3 text-[#3FB950]" />
+            <span>CNN View</span>
+          </button>
+        </div>
       </div>
 
       {/* Right: Controls, Global Status Pill & Help */}
